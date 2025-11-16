@@ -16,6 +16,9 @@ try:
 except ImportError:
     OpenAI = None
 
+from database import get_db_path
+import sqlite3
+
 # Tool function implementations (simulated backend calls)
 # In production, these would connect to actual HR systems
 
@@ -92,7 +95,6 @@ def search_hr_knowledge_base(query: str) -> Dict[str, Any]:
             "query": query
         }
 
-
 def check_in(user_id: str) -> Dict[str, Any]:
     """
     Record employee check-in.
@@ -104,7 +106,17 @@ def check_in(user_id: str) -> Dict[str, Any]:
         Confirmation with timestamp and check-in ID
     """
     timestamp = datetime.now().isoformat()
-    check_in_id = f"CHK-IN-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    date = datetime.now().strftime('%Y-%m-%d')
+
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("INSERT INTO attendance (employee_id, check_in, date) VALUES (?, ?, ?)", (user_id, timestamp, date))
+    check_in_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
     
     return {
         "success": True,
@@ -114,7 +126,6 @@ def check_in(user_id: str) -> Dict[str, Any]:
         "check_in_id": check_in_id,
         "message": f"Successfully checked in at {timestamp}"
     }
-
 
 def check_out(user_id: str, note: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -128,14 +139,22 @@ def check_out(user_id: str, note: Optional[str] = None) -> Dict[str, Any]:
         Confirmation with timestamp and check-out ID
     """
     timestamp = datetime.now().isoformat()
-    check_out_id = f"CHK-OUT-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    date = datetime.now().strftime('%Y-%m-%d')
+
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("UPDATE attendance SET check_out = ? WHERE employee_id = ? AND date = ?", (timestamp, user_id, date))
+
+    conn.commit()
+    conn.close()
     
     result = {
         "success": True,
         "action": "check_out",
         "user_id": user_id,
         "timestamp": timestamp,
-        "check_out_id": check_out_id,
         "message": f"Successfully checked out at {timestamp}"
     }
     
@@ -144,7 +163,6 @@ def check_out(user_id: str, note: Optional[str] = None) -> Dict[str, Any]:
         result["message"] += f" with note: {note}"
     
     return result
-
 
 def get_leave_balance(user_id: str) -> Dict[str, Any]:
     """
@@ -156,30 +174,46 @@ def get_leave_balance(user_id: str) -> Dict[str, Any]:
     Returns:
         Current leave balances by type
     """
-    # Simulated balance retrieval
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    total_pto = 15
+    total_sick = 10
+
+    cursor.execute("SELECT SUM(julianday(end_date) - julianday(start_date) + 1) FROM leaves WHERE employee_id = ? AND leave_type = 'pto' AND status = 'approved'", (user_id,))
+    used_pto = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT SUM(julianday(end_date) - julianday(start_date) + 1) FROM leaves WHERE employee_id = ? AND leave_type = 'sick' AND status = 'approved'", (user_id,))
+    used_sick = cursor.fetchone()[0] or 0
+
+    cursor.execute("SELECT SUM(julianday(end_date) - julianday(start_date) + 1) FROM leaves WHERE employee_id = ? AND leave_type = 'unpaid' AND status = 'approved'", (user_id,))
+    used_unpaid = cursor.fetchone()[0] or 0
+
+    conn.close()
+
     return {
         "success": True,
         "user_id": user_id,
         "balances": {
             "pto": {
-                "available": 12.5,
-                "used": 2.5,
-                "total": 15.0
+                "available": total_pto - used_pto,
+                "used": used_pto,
+                "total": total_pto
             },
             "sick": {
-                "available": 8.0,
-                "used": 2.0,
-                "total": 10.0
+                "available": total_sick - used_sick,
+                "used": used_sick,
+                "total": total_sick
             },
             "unpaid": {
                 "available": "unlimited",
-                "used": 0,
+                "used": used_unpaid,
                 "total": "unlimited"
             }
         },
         "as_of_date": datetime.now().strftime('%Y-%m-%d')
     }
-
 
 def request_leave(
     user_id: str,
@@ -201,7 +235,15 @@ def request_leave(
     Returns:
         Confirmation with request ID and status
     """
-    request_id = f"LR-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("INSERT INTO leaves (employee_id, start_date, end_date, leave_type, reason, status) VALUES (?, ?, ?, ?, ?, ?)", (user_id, start_date, end_date, leave_type, reason, "pending"))
+    request_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
     
     return {
         "success": True,
@@ -215,7 +257,6 @@ def request_leave(
         "status": "pending",
         "message": f"Leave request {request_id} submitted successfully. Status: pending approval."
     }
-
 
 def get_leave_requests(
     user_id: str,
@@ -231,39 +272,35 @@ def get_leave_requests(
     Returns:
         List of leave requests matching the filter
     """
-    # Simulated leave requests
-    all_requests = [
-        {
-            "request_id": f"LR-{user_id}-20231101120000",
-            "start_date": "2023-12-20",
-            "end_date": "2023-12-27",
-            "leave_type": "pto",
-            "status": "approved",
-            "reason": "Holiday vacation"
-        },
-        {
-            "request_id": f"LR-{user_id}-20231115140000",
-            "start_date": "2024-01-15",
-            "end_date": "2024-01-15",
-            "leave_type": "sick",
-            "status": "pending",
-            "reason": "Doctor appointment"
-        }
-    ]
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
     
-    if filter_status != "all":
-        filtered = [req for req in all_requests if req["status"] == filter_status]
+    if filter_status == "all":
+        cursor.execute("SELECT id, start_date, end_date, leave_type, status, reason FROM leaves WHERE employee_id = ?", (user_id,))
     else:
-        filtered = all_requests
+        cursor.execute("SELECT id, start_date, end_date, leave_type, status, reason FROM leaves WHERE employee_id = ? AND status = ?", (user_id, filter_status))
+
+    requests = []
+    for row in cursor.fetchall():
+        requests.append({
+            "request_id": row[0],
+            "start_date": row[1],
+            "end_date": row[2],
+            "leave_type": row[3],
+            "status": row[4],
+            "reason": row[5]
+        })
+
+    conn.close()
     
     return {
         "success": True,
         "user_id": user_id,
         "filter_status": filter_status,
-        "count": len(filtered),
-        "requests": filtered
+        "count": len(requests),
+        "requests": requests
     }
-
 
 def correct_attendance(
     user_id: str,
@@ -283,7 +320,22 @@ def correct_attendance(
     Returns:
         Confirmation with correction ID
     """
-    correction_id = f"AC-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM attendance WHERE employee_id = ? AND date = ?", (user_id, date))
+    record = cursor.fetchone()
+
+    if record:
+        cursor.execute("UPDATE attendance SET check_in = ?, check_out = ? WHERE id = ?", (status, f"Corrected: {reason}", record[0]))
+    else:
+        cursor.execute("INSERT INTO attendance (employee_id, date, check_in, check_out) VALUES (?, ?, ?, ?)", (user_id, date, status, f"Corrected: {reason}"))
+
+    correction_id = cursor.lastrowid or record[0]
+
+    conn.commit()
+    conn.close()
     
     return {
         "success": True,
@@ -296,7 +348,6 @@ def correct_attendance(
         "message": f"Attendance correction {correction_id} submitted for {date}. "
                   f"Status changed to: {status}. Pending approval."
     }
-
 
 def escalate_to_human_hr(
     user_id: str,
@@ -314,7 +365,18 @@ def escalate_to_human_hr(
     Returns:
         Confirmation with escalation ticket ID
     """
-    ticket_id = f"HR-ESC-{user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    timestamp = datetime.now().isoformat()
+
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    details = f"Topic: {topic}, Summary: {chat_history_summary}"
+    cursor.execute("INSERT INTO audit_log (timestamp, user_id, action, details) VALUES (?, ?, ?, ?)", (timestamp, user_id, "escalation", details))
+    ticket_id = cursor.lastrowid
+
+    conn.commit()
+    conn.close()
     
     return {
         "success": True,
@@ -326,7 +388,6 @@ def escalate_to_human_hr(
         "message": f"Your request has been escalated to human HR. "
                   f"Ticket ID: {ticket_id}. An HR representative will contact you within 24 hours."
     }
-
 
 # Tool definitions for the agent
 TOOLS = [
@@ -536,223 +597,6 @@ TOOL_FUNCTIONS = {
     "escalate_to_human_hr": escalate_to_human_hr
 }
 
-
-class HRAssist:
-    """
-    Main HR-Assist agent class.
-    
-    This class manages the conversation flow, enforces authentication,
-    and coordinates tool usage according to the strict requirements.
-    """
-    
-    def __init__(self, openai_api_key: Optional[str] = None, company_name: str = "CompanyName"):
-        """
-        Initialize the HR-Assist agent.
-        
-        Args:
-            openai_api_key: OpenAI API key (defaults to env variable)
-            company_name: Name of the company
-        """
-        self.api_key = openai_api_key or os.getenv("OPENAI_API_KEY")
-        self.company_name = company_name
-        self.conversation_history = []
-        
-        if not self.api_key:
-            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable.")
-        
-        # Initialize OpenAI client
-        if OpenAI is None:
-            raise ImportError("OpenAI package is required. Install with: pip install openai")
-        
-        self.client = OpenAI(api_key=self.api_key)
-        
-        self.system_prompt = f"""You are HR-Assist, a secure and empathetic HR operations assistant for {self.company_name}.
-
-CRITICAL RULES YOU MUST FOLLOW:
-
-1. AUTHENTICATION REQUIREMENT:
-   - You MUST receive authenticated_user_id with every request
-   - If authenticated_user_id is missing, REFUSE to operate and ask for it
-   - Never proceed with any action without authenticated_user_id
-
-2. POLICY INFORMATION:
-   - For ALL questions about HR policies, benefits, procedures, or rules, you MUST use the search_hr_knowledge_base tool
-   - NEVER guess or make up policy information
-   - Only provide information retrieved from search_hr_knowledge_base
-   - If search returns no results, say you can't find a specific policy and offer to escalate to human HR
-
-3. ACTION TOOLS:
-   - Always pass authenticated_user_id as user_id when calling action tools
-   - Before calling any tool, ensure you have ALL required parameters
-   - If parameters are missing, ask the user for them
-   - After each tool call, provide a clear confirmation message with IDs and status
-
-4. TONE:
-   - Be professional, concise, and friendly
-   - Show empathy and understanding
-   - Never make jokes about serious HR matters
-   - Be respectful of privacy and confidentiality
-
-5. ESCALATION:
-   - If you cannot help or find relevant policy information, offer to escalate to human HR
-   - Use escalate_to_human_hr tool when appropriate
-
-Remember: You are a helpful assistant, but you must strictly follow these rules for security and compliance."""
-    
-    def validate_authentication(self, authenticated_user_id: Optional[str]) -> bool:
-        """
-        Validate that authenticated_user_id is provided.
-        
-        Args:
-            authenticated_user_id: The authenticated user ID from the request
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        return authenticated_user_id is not None and authenticated_user_id.strip() != ""
-    
-    def chat(
-        self,
-        user_message: str,
-        authenticated_user_id: Optional[str] = None,
-        user_name: Optional[str] = None
-    ) -> str:
-        """
-        Process a user message and return the assistant's response.
-        
-        Args:
-            user_message: The user's message
-            authenticated_user_id: Required authenticated user ID
-            user_name: Optional user name for personalization
-            
-        Returns:
-            The assistant's response as a string
-        """
-        # Validate authentication
-        if not self.validate_authentication(authenticated_user_id):
-            return (
-                "❌ Authentication required. I cannot assist without your authenticated user ID. "
-                "Please provide your authenticated_user_id to continue."
-            )
-        
-        # Add user context to the message
-        context_prefix = f"[Authenticated User: {authenticated_user_id}"
-        if user_name:
-            context_prefix += f", Name: {user_name}"
-        context_prefix += "] "
-        
-        contextual_message = context_prefix + user_message
-        
-        # Add to conversation history
-        self.conversation_history.append({
-            "role": "user",
-            "content": contextual_message
-        })
-        
-        # Initial API call
-        messages = [
-            {"role": "system", "content": self.system_prompt}
-        ] + self.conversation_history
-        
-        try:
-            response = self.client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4"),
-                messages=messages,
-                tools=TOOLS,
-                tool_choice="auto"
-            )
-            
-            # Process the response
-            return self._process_response(response, authenticated_user_id)
-            
-        except Exception as e:
-            error_msg = f"I apologize, but I encountered an error: {str(e)}. Please try again or contact support."
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": error_msg
-            })
-            return error_msg
-    
-    def _process_response(self, response, authenticated_user_id: str) -> str:
-        """
-        Process the API response, handling tool calls if needed.
-        
-        Args:
-            response: The API response object
-            authenticated_user_id: The authenticated user ID
-            
-        Returns:
-            The final assistant response as a string
-        """
-        assistant_message = response.choices[0].message
-        
-        # Check if there are tool calls
-        if assistant_message.tool_calls:
-            # Add assistant's message to history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": assistant_message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments
-                        }
-                    }
-                    for tc in assistant_message.tool_calls
-                ]
-            })
-            
-            # Execute tool calls
-            for tool_call in assistant_message.tool_calls:
-                function_name = tool_call.function.name
-                function_args = json.loads(tool_call.function.arguments)
-                
-                # Execute the function
-                if function_name in TOOL_FUNCTIONS:
-                    function_response = TOOL_FUNCTIONS[function_name](**function_args)
-                    
-                    # Add tool response to history
-                    self.conversation_history.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": function_name,
-                        "content": json.dumps(function_response)
-                    })
-            
-            # Get final response from the model
-            messages = [
-                {"role": "system", "content": self.system_prompt}
-            ] + self.conversation_history
-            
-            final_response = self.client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL", "gpt-4"),
-                messages=messages
-            )
-            
-            final_message = final_response.choices[0].message.content
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": final_message
-            })
-            
-            return final_message
-        else:
-            # No tool calls, just return the content
-            content = assistant_message.content or "I apologize, but I'm not sure how to respond. Could you please rephrase your question?"
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": content
-            })
-            return content
-    
-    def reset_conversation(self):
-        """Reset the conversation history."""
-        self.conversation_history = []
-
-
 def main():
     """
     Main function to demonstrate HR-Assist usage.
@@ -774,7 +618,8 @@ def main():
     
     # Initialize the agent
     try:
-        agent = HRAssist(company_name=company_name)
+        from agent import HRAssistAgent
+        agent = HRAssistAgent()
     except Exception as e:
         print(f"Error initializing HR-Assist: {e}")
         sys.exit(1)
@@ -799,7 +644,8 @@ def main():
             break
         
         if user_input.lower() == 'reset':
-            agent.reset_conversation()
+            # This is a bit of a hack to reset the agent's state
+            agent = HRAssistAgent()
             print("Conversation reset. Starting fresh!")
             continue
         
@@ -811,7 +657,6 @@ def main():
         )
         
         print(f"\nHR-Assist: {response}\n")
-
 
 if __name__ == "__main__":
     main()
